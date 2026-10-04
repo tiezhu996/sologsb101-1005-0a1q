@@ -1,0 +1,226 @@
+/* 桥梁支座更换与顶升监测台 · 全局样式
+   桥梁蓝 + 监测绿，工程台账观感；同时引入 Angular Material（M2 API）主题。 */
+
+@use '@angular/material' as mat;
+
+@include mat.core();
+
+$gb-primary: mat.m2-define-palette(mat.$m2-blue-palette, 800);
+$gb-accent: mat.m2-define-palette(mat.$m2-teal-palette, 600);
+$gb-warn: mat.m2-define-palette(mat.$m2-red-palette, 700);
+
+$gb-theme: mat.m2-define-light-theme(
+  (
+    color: (
+      primary: $gb-primary,
+      accent: $gb-accent,
+      warn: $gb-warn,
+    ),
+    typography:
+      mat.m2-define-typography-config(
+        $font-family: '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC", sans-serif',
+      ),
+    density: 0,
+  )
+);
+
+@include mat.all-component-themes($gb-theme);
+
+:root {
+  --gb-bg: #f3f6fa;
+  --gb-surface: #ffffff;
+  --gb-primary: #1565c0;
+  --gb-accent: #00897b;
+  --gb-warn: #c62828;
+  --gb-line: rgba(21, 101, 192, 0.16);
+  --gb-ok: #2e7d32;
+  --gb-watch: #ed6c02;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--gb-bg);
+  color: #16222e;
+  font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Source Han Sans SC', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 页面骨架 */
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.page-sub {
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: rgba(22, 34, 46, 0.6);
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 14px;
+}
+
+.gb-card {
+  background: var(--gb-surface);
+  border: 1px solid var(--gb-line);
+  border-radius: 10px;
+  padding: 14px;
+  cursor: pointer;
+  transition:
+    box-shadow 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.gb-card:hover {
+  border-color: var(--gb-primary);
+  box-shadow: 0 6px 18px rgba(21, 101, 192, 0.12);
+  transform: translateY(-1px);
+}
+
+.gb-card.is-active {
+  border-color: var(--gb-primary);
+  box-shadow: 0 0 0 2px rgba(21, 101, 192, 0.18);
+}
+
+.gb-card-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.gb-hint {
+  font-size: 12px;
+  color: rgba(22, 34, 46, 0.58);
+}
+
+.gb-mono {
+  font-family: 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.gb-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gb-section {
+  margin-top: 14px;
+}
+
+.gb-table-wrap {
+  background: var(--gb-surface);
+  border: 1px solid var(--gb-line);
+  border-radius: 10px;
+  overflow: auto;
+}
+
+table.gb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+table.gb-table th,
+table.gb-table td {
+  padding: 9px 10px;
+  text-align: left;
+  border-bottom: 1px solid rgba(22, 34, 46, 0.08);
+  vertical-align: middle;
+}
+
+table.gb-table th {
+  background: #f5f8fc;
+  font-weight: 600;
+  color: rgba(22, 34, 46, 0.75);
+  white-space: nowrap;
+}
+
+table.gb-table tr:hover td {
+  background: #f9fbfd;
+}
+
+table.gb-table tr.is-selected td {
+  background: #e8f1fb;
+}
+
+.gb-row-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.gb-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.gb-empty {
+  padding: 32px 16px;
+  text-align: center;
+  background: var(--gb-surface);
+  border: 1px dashed var(--gb-line);
+  border-radius: 10px;
+}
+
+.gb-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+
+.gb-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gb-timeline-node {
+  border-left: 3px solid var(--gb-primary);
+  padding: 6px 0 6px 12px;
+}
+
+.gb-timeline-node.is-exceed {
+  border-left-color: var(--gb-warn);
+}
+
+.gb-timeline-node.is-watch {
+  border-left-color: var(--gb-watch);
+}
+
+.gb-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}

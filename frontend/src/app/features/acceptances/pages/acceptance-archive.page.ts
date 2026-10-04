@@ -1,4 +1,4 @@
-import { Component, computed, inject, signal, type Signal } from '@angular/core';
+import { Component, computed, effect, inject, signal, type Signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { Store } from '@ngrx/store';
@@ -57,11 +57,19 @@ import { StatBadgeComponent } from '../../../shared/components/common/stat-badge
 import { EmptyPanelComponent } from '../../../shared/components/common/empty-panel.component';
 import { FilterBarComponent, type FilterSelectSpec } from '../../../shared/components/common/filter-bar.component';
 import { GradeTagComponent } from '../../../shared/components/common/grade-tag.component';
+import { MergeHandoffPanelComponent } from '../../../shared/components/merge/merge-handoff.panel';
+import {
+  selectAllDifferences,
+  selectLastHandoff,
+  resolveBlockedBearingIds,
+  type FlatDifference,
+} from '../../../core/store/merge.selectors';
 import type {
   AcceptanceRow,
   BearingRow,
   BridgeRow,
   PierRow,
+  StepRow,
 } from '../../../core/utils/db';
 
 /**
@@ -88,6 +96,7 @@ import type {
     EmptyPanelComponent,
     FilterBarComponent,
     GradeTagComponent,
+    MergeHandoffPanelComponent,
   ],
   template: `
     <div class="page-head">
@@ -115,6 +124,28 @@ import type {
         </button>
       </div>
     </div>
+
+    <app-merge-handoff-panel />
+
+    @if (lastHandoff().message) {
+      <mat-card appearance="outlined" class="gb-section">
+        <div style="padding: 10px 14px" [class.handoff-ok]="lastHandoff().status === 'merged'"
+             [class.handoff-warn]="lastHandoff().status !== 'merged'">
+          <mat-icon>{{ lastHandoff().status === 'merged' ? 'check_circle' : 'info' }}</mat-icon>
+          {{ lastHandoff().message }}
+        </div>
+      </mat-card>
+    }
+
+    @if (blockedCount() > 0) {
+      <mat-card appearance="outlined" class="gb-section handoff-block-banner">
+        <div style="padding: 10px 14px">
+          <mat-icon>block</mat-icon>
+          有 {{ blockedCount() }} 个支座因离线合并存在未核定差异，暂不能签署验收：
+          病害等级双边冲突的支座、以及步骤参数双边冲突桥梁下的全部支座，请到上方「差异清单」确认主台账原值后再签。
+        </div>
+      </mat-card>
+    }
 
     <div class="stat-grid">
       <app-stat-badge title="验收记录" [value]="stats().total" [suffix]="'条'" color="#1565c0" />
@@ -237,15 +268,16 @@ import type {
                 <th>病害等级</th>
                 <th>四步进度</th>
                 <th>结论摘要</th>
-                <th style="width: 190px">操作</th>
+                <th style="width: 240px">操作</th>
               </tr>
             </thead>
             <tbody>
               @for (row of bearingRows(); track row.id) {
-                <tr [class.is-selected]="selected().includes(row.id)">
+                <tr [class.is-selected]="selected().includes(row.id)" [class.is-blocked]="isBlocked(row.id)">
                   <td>
                     <mat-checkbox
                       [checked]="selected().includes(row.id)"
+                      [disabled]="isBlocked(row.id)"
                       (change)="toggleBearing(row.id)"
                     ></mat-checkbox>
                   </td>
@@ -264,12 +296,19 @@ import type {
                   </td>
                   <td class="gb-hint">{{ summaryOf(row.id) }}</td>
                   <td>
-                    <div class="gb-row-actions">
-                      <button mat-button color="primary" (click)="signOne(row.id, 'lifted')">顶升到位</button>
-                      <button mat-button (click)="signOne(row.id, 'bearingPlaced')">支座就位</button>
-                      <button mat-button (click)="signOne(row.id, 'beamLowered')">落梁</button>
-                      <button mat-button (click)="signOne(row.id, 'completed')">竣工</button>
-                    </div>
+                    @if (isBlocked(row.id)) {
+                      <div class="gb-row-actions blocked-tip">
+                        <mat-icon>lock</mat-icon>
+                        <span>合并差异未核定，暂停签署</span>
+                      </div>
+                    } @else {
+                      <div class="gb-row-actions">
+                        <button mat-button color="primary" (click)="signOne(row.id, 'lifted')">顶升到位</button>
+                        <button mat-button (click)="signOne(row.id, 'bearingPlaced')">支座就位</button>
+                        <button mat-button (click)="signOne(row.id, 'beamLowered')">落梁</button>
+                        <button mat-button (click)="signOne(row.id, 'completed')">竣工</button>
+                      </div>
+                    }
                   </td>
                 </tr>
               }
@@ -403,6 +442,29 @@ import type {
         background: #eceff1 !important;
         color: #546e7a !important;
       }
+      tr.is-blocked {
+        background: #fff8e1;
+      }
+      .blocked-tip {
+        color: #e65100;
+        align-items: center;
+      }
+      .handoff-block-banner {
+        border-color: #ef6c00;
+        background: #fff8e1;
+        color: #e65100;
+      }
+      .handoff-block-banner div {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .handoff-ok {
+        color: #1b5e20;
+      }
+      .handoff-warn {
+        color: #e65100;
+      }
     `,
   ],
 })
@@ -438,6 +500,14 @@ export class AcceptanceArchivePage {
     this.store.select((state) => state.acceptance.acceptances),
     { initialValue: [] as AcceptanceRow[] },
   );
+  /** 离线合并未确认差异（用于计算签署冻结） */
+  readonly mergeDifferences: Signal<FlatDifference[]> = toSignal(
+    this.store.select(selectAllDifferences),
+    { initialValue: [] as FlatDifference[] },
+  );
+  readonly lastHandoff = toSignal(this.store.select(selectLastHandoff), {
+    initialValue: { message: '', status: '' as const },
+  });
   private readonly counts = toSignal(this.idb.countAll$(), { initialValue: {} as Record<string, number> });
 
   readonly stats = toSignal(this.store.select(selectAcceptanceStats), {
@@ -518,6 +588,26 @@ export class AcceptanceArchivePage {
     () => this.bearingRows().filter((bearing) => this.fullyAccepted(bearing.id)).length,
   );
 
+  /** 因离线合并未核定差异而冻结签署的支座 id 集合 */
+  readonly blockedBearingIds = computed<Set<string>>(() =>
+    resolveBlockedBearingIds(
+      this.mergeDifferences().filter((item) => !item.acknowledged),
+      this.bearings(),
+      this.piers(),
+      this.steps(),
+    ),
+  );
+
+  private readonly steps = toSignal(this.store.select((state) => state.step.steps), {
+    initialValue: [] as StepRow[],
+  });
+
+  readonly blockedCount = computed(() => this.blockedBearingIds().size);
+
+  isBlocked(bearingId: string): boolean {
+    return this.blockedBearingIds().has(bearingId);
+  }
+
   readonly acceptanceRate = computed(() => share(this.fullyAcceptedCount(), this.bearingRows().length));
 
   readonly tableCounts = computed(() =>
@@ -537,6 +627,13 @@ export class AcceptanceArchivePage {
     // 默认全选待验收支座，便于快速批量签署
     queueMicrotask(() => {
       if (this.selected().length === 0) this.selectAllBearings();
+    });
+    // 合并差异出现 / 解除时，自动把被冻结的支座移出批量选择
+    effect(() => {
+      const blocked = this.blockedBearingIds();
+      if (blocked.size === 0) return;
+      const pruned = this.selected().filter((id) => !blocked.has(id));
+      if (pruned.length !== this.selected().length) this.selected.set(pruned);
     });
   }
 
@@ -589,6 +686,10 @@ export class AcceptanceArchivePage {
   }
 
   toggleBearing(bearingId: string): void {
+    if (this.isBlocked(bearingId)) {
+      this.notify('该支座存在未核定的离线合并差异，暂不能选择签署');
+      return;
+    }
     this.selected.set(
       this.selected().includes(bearingId)
         ? this.selected().filter((item) => item !== bearingId)
@@ -597,10 +698,15 @@ export class AcceptanceArchivePage {
   }
 
   selectAllBearings(): void {
-    this.selected.set(this.bearingRows().map((item) => item.id));
+    // 被合并差异冻结的支座不进入批量签署选择
+    this.selected.set(this.bearingRows().map((item) => item.id).filter((id) => !this.isBlocked(id)));
   }
 
   signOne(bearingId: string, stage: AcceptanceStage): void {
+    if (this.isBlocked(bearingId)) {
+      this.notify('该支座的离线合并差异尚未核定，处理前不能签署验收');
+      return;
+    }
     this.store.dispatch(
       acceptanceActions.bulkSign({
         bearingIds: [bearingId],
@@ -616,7 +722,12 @@ export class AcceptanceArchivePage {
   }
 
   bulkSign(): void {
-    const ids = this.selected();
+    const ids = this.selected().filter((id) => !this.isBlocked(id));
+    const blockedCount = this.selected().length - ids.length;
+    if (blockedCount > 0) {
+      this.notify(`已自动剔除 ${blockedCount} 个被合并差异冻结的支座`);
+      this.selected.set(ids);
+    }
     if (ids.length === 0) return;
     this.store.dispatch(
       acceptanceActions.bulkSign({

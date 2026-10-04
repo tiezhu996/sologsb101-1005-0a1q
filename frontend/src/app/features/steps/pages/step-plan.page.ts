@@ -43,6 +43,7 @@ import { TOLERANCE_HEX, TOLERANCE_LEVEL_LABEL } from '../../../core/utils/tolera
 import { StatBadgeComponent } from '../../../shared/components/common/stat-badge.component';
 import { EmptyPanelComponent } from '../../../shared/components/common/empty-panel.component';
 import { FilterBarComponent, type FilterSelectSpec } from '../../../shared/components/common/filter-bar.component';
+import { selectOpenDifferenceCountByStep } from '../../../core/store/merge.selectors';
 import type { BridgeRow, ReadingRow, StepRow } from '../../../core/utils/db';
 import type { ToleranceLevel } from '../../../core/utils/tolerance';
 
@@ -263,6 +264,13 @@ export class StepDialogComponent {
                 <td>
                   <mat-chip-set>
                     <mat-chip [class]="'state-' + step.state">{{ stepStateLabel[step.state] }}</mat-chip>
+                    @if (mergeDiffCount(step.id) > 0) {
+                      <mat-chip class="merge-warn-chip"
+                        [matTooltip]="'离线作业包与主台账对该步骤参数都有改动，已保留主台账原值，请到验收页离线交接面板确认差异'">
+                        <mat-icon>difference</mat-icon>
+                        合并差异 {{ mergeDiffCount(step.id) }}
+                      </mat-chip>
+                    }
                   </mat-chip-set>
                 </td>
                 <td>
@@ -360,6 +368,10 @@ export class StepDialogComponent {
         background: #e8f5e9 !important;
         color: #1b5e20 !important;
       }
+      mat-chip.merge-warn-chip {
+        background: #fff3e0 !important;
+        color: #e65100 !important;
+      }
     `,
   ],
 })
@@ -407,6 +419,15 @@ export class StepPlanPage {
   );
   readonly syncHints = toSignal(this.store.select(selectSyncHints), { initialValue: [] });
   readonly stepAverages = toSignal(this.store.select(selectStepAverages), { initialValue: {} });
+
+  /** 离线合并：各步骤未确认的参数双边改动差异数 */
+  readonly openStepDiffs = toSignal(this.store.select(selectOpenDifferenceCountByStep), {
+    initialValue: new Map<string, number>(),
+  });
+
+  mergeDiffCount(stepId: string): number {
+    return this.openStepDiffs().get(stepId) ?? 0;
+  }
 
   readonly stepViews: Signal<StepView[]> = computed(() =>
     buildStepViews(this.steps(), this.readings(), this.bridges()),

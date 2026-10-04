@@ -12,6 +12,11 @@ import type { Bearing, DiseaseGrade } from '../types/bearing';
 import type { Step, SyncRequirement } from '../types/step';
 import type { Reading } from '../types/reading';
 import type { Acceptance, AcceptanceStage } from '../types/acceptance';
+import type {
+  MergeReport,
+  PendingMerge,
+  QuarantinedPackage,
+} from '../types/merge';
 import { ROW_REVISION, type Revisioned } from '../types/persistence';
 
 /** 浏览器 IndexedDB 库名 */
@@ -104,6 +109,54 @@ class BridgeBearingDatabase extends Dexie {
 }
 
 export const db = new BridgeBearingDatabase();
+
+/* ======================== 离线合并交接台账（settings 表） ======================== */
+
+/** settings 表中合并交接台账的键名 */
+export const MERGE_LEDGER_SETTING_ID = 'merge-ledger-v1';
+
+export interface MergeLedger {
+  /** 已成功并入主台账的报告（含全部差异登记） */
+  reports: MergeReport[];
+  /** 写入失败、待重试的未完成批次 */
+  pending: PendingMerge[];
+  /** 旧包缺基线等待补证的作业包 */
+  quarantined: QuarantinedPackage[];
+  updatedAt: string;
+}
+
+export const emptyMergeLedger = (): MergeLedger => ({
+  reports: [],
+  pending: [],
+  quarantined: [],
+  updatedAt: new Date(0).toISOString(),
+});
+
+/** 读取合并交接台账（无记录时返回空台账） */
+export async function getMergeLedger(): Promise<MergeLedger> {
+  const raw = await db.settings.get(MERGE_LEDGER_SETTING_ID);
+  if (!raw || !raw.value) return emptyMergeLedger();
+  try {
+    const parsed = JSON.parse(raw.value) as Partial<MergeLedger>;
+    return {
+      reports: Array.isArray(parsed.reports) ? parsed.reports : [],
+      pending: Array.isArray(parsed.pending) ? parsed.pending : [],
+      quarantined: Array.isArray(parsed.quarantined) ? parsed.quarantined : [],
+      updatedAt: parsed.updatedAt ?? new Date(0).toISOString(),
+    };
+  } catch {
+    return emptyMergeLedger();
+  }
+}
+
+/** 覆盖写回合并交接台账 */
+export async function saveMergeLedger(ledger: MergeLedger): Promise<void> {
+  await db.settings.put({
+    id: MERGE_LEDGER_SETTING_ID,
+    value: JSON.stringify({ ...ledger, updatedAt: new Date().toISOString() }),
+    updatedAt: new Date().toISOString(),
+  });
+}
 
 /* ============================== 演示数据播种 ============================== */
 

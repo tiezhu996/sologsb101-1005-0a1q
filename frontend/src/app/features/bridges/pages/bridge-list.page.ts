@@ -47,6 +47,11 @@ import { StatBadgeComponent } from '../../../shared/components/common/stat-badge
 import { EmptyPanelComponent } from '../../../shared/components/common/empty-panel.component';
 import { FilterBarComponent, type FilterSelectSpec } from '../../../shared/components/common/filter-bar.component';
 import { GradeTagComponent } from '../../../shared/components/common/grade-tag.component';
+import {
+  selectOpenDifferenceCountByBridge,
+  selectQuarantinedPackages,
+  selectPendingMerges,
+} from '../../../core/store/merge.selectors';
 
 /** 桥梁表单对话框数据 */
 export interface BridgeDialogData {
@@ -317,6 +322,16 @@ export class PierDialogComponent {
                 <mat-chip [class]="bridge.archived ? 'chip-archived' : 'chip-open'">
                   {{ bridge.archived ? '已归档' : ageLevel(bridge.builtYear) }}
                 </mat-chip>
+                @if (mergeOpenCount(bridge.id) > 0) {
+                  <mat-chip class="chip-merge-warn" (click)="go(ROUTES.acceptances, $event)">
+                    离线差异 {{ mergeOpenCount(bridge.id) }} 待核定
+                  </mat-chip>
+                }
+                @if (mergeAttentionCount(bridge.id) > 0) {
+                  <mat-chip class="chip-merge-warn" (click)="go(ROUTES.acceptances, $event)">
+                    待补证/重试 {{ mergeAttentionCount(bridge.id) }}
+                  </mat-chip>
+                }
               </mat-chip-set>
             </div>
 
@@ -479,6 +494,10 @@ export class PierDialogComponent {
         background: #e3f2fd !important;
         color: #0d47a1 !important;
       }
+      mat-chip.chip-merge-warn {
+        background: #fff3e0 !important;
+        color: #e65100 !important;
+      }
     `,
   ],
 })
@@ -500,6 +519,13 @@ export class BridgeListPage {
   });
   readonly activeBridgeId = toSignal(this.store.select(selectActiveBridgeId), { initialValue: null });
   readonly bearings = toSignal(this.store.select(selectBearings), { initialValue: [] });
+
+  /** 离线合并结果：按桥未确认差异数、待补证 / 待重试数 */
+  readonly openDiffByBridge = toSignal(this.store.select(selectOpenDifferenceCountByBridge), {
+    initialValue: new Map<string, number>(),
+  });
+  readonly quarantined = toSignal(this.store.select(selectQuarantinedPackages), { initialValue: [] });
+  readonly pendingMerges = toSignal(this.store.select(selectPendingMerges), { initialValue: [] });
 
   /** 墩台原始行（补充支座统计在 piersOf 中派生） */
   readonly pierViews: Signal<PierRow[]> = toSignal(this.store.select((state) => state.bridge.piers), {
@@ -614,6 +640,18 @@ export class BridgeListPage {
 
   pendingOf(bridgeId: string) {
     return this.bearingsOf(bridgeId).filter((item) => needReplacement(item.diseaseGrade));
+  }
+
+  /** 该桥离线合并且未确认的差异数 */
+  mergeOpenCount(bridgeId: string): number {
+    return this.openDiffByBridge().get(bridgeId) ?? 0;
+  }
+
+  /** 该桥待补证 + 待重试批次数 */
+  mergeAttentionCount(bridgeId: string): number {
+    const quarantine = this.quarantined().filter((item) => item.bridgeId === bridgeId).length;
+    const pending = this.pendingMerges().filter((item) => item.bridgeId === bridgeId).length;
+    return quarantine + pending;
   }
 
   platformHint(): string {

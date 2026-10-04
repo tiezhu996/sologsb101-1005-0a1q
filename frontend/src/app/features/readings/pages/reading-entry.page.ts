@@ -40,6 +40,7 @@ import { nowDateTime } from '../../../core/utils/export';
 import { StatBadgeComponent } from '../../../shared/components/common/stat-badge.component';
 import { EmptyPanelComponent } from '../../../shared/components/common/empty-panel.component';
 import { FilterBarComponent, type FilterSelectSpec } from '../../../shared/components/common/filter-bar.component';
+import { selectMergeReports } from '../../../core/store/merge.selectors';
 import type { BridgeRow, StepRow } from '../../../core/utils/db';
 import type { ToleranceLevel } from '../../../core/utils/tolerance';
 
@@ -114,6 +115,13 @@ interface BatchRow {
         [suffix]="'条'"
         color="#c62828"
         [hint]="'限位值 ' + (selectedStep()?.limitMm ?? 0) + ' mm，应力关注值 ' + stressAlert + ' MPa'"
+      />
+      <app-stat-badge
+        title="离线包追加读数"
+        [value]="mergedReadingCount()"
+        [suffix]="'条'"
+        color="#e65100"
+        [hint]="'跳过重复 ' + mergedSkippedCount() + ' 条，按步骤+测点唯一键追加'"
       />
     </div>
 
@@ -355,6 +363,15 @@ export class ReadingEntryPage {
       maxLimitMm: 0,
     },
   });
+
+  /** 离线合并报告：统计回站追加的读数条数 */
+  private readonly mergeReports = toSignal(this.store.select(selectMergeReports), { initialValue: [] });
+  readonly mergedReadingCount = computed(() =>
+    this.mergeReports().reduce((sum, report) => sum + report.appendedReadingCount, 0),
+  );
+  readonly mergedSkippedCount = computed(() =>
+    this.mergeReports().reduce((sum, report) => sum + report.skippedReadingCount, 0),
+  );
 
   readonly stepViews: Signal<StepView[]> = computed(() =>
     buildStepViews(this.steps(), this.readings(), this.bridges()),

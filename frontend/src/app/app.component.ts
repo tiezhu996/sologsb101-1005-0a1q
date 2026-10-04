@@ -20,6 +20,8 @@ import {
 import { selectBridgeStats } from './core/store/bridge.selectors';
 import { selectStepStats } from './core/store/step.selectors';
 import { selectAcceptanceStats } from './core/store/acceptance.selectors';
+import { mergeActions } from './core/store/merge.actions';
+import { selectAttentionCount } from './core/store/merge.selectors';
 import { ROUTES } from './core/router/app.routes';
 
 interface NavItem {
@@ -57,6 +59,11 @@ interface NavItem {
         <mat-chip highlighted>待换支座 {{ bearingStats().pending }} 个</mat-chip>
         <mat-chip highlighted>顶升级数 {{ stepStats().total }}</mat-chip>
         <mat-chip highlighted>验收合格 {{ acceptanceStats().pass }} 条</mat-chip>
+        @if (mergeAttention().pending + mergeAttention().quarantined > 0) {
+          <mat-chip class="app-merge-chip" highlighted>
+            离线交接：待重试 {{ mergeAttention().pending }} · 待补证 {{ mergeAttention().quarantined }}
+          </mat-chip>
+        }
       </mat-chip-set>
     </mat-toolbar>
 
@@ -122,6 +129,10 @@ interface NavItem {
       .app-error-chip {
         background: #ffebee !important;
         color: #b71c1c !important;
+      }
+      .app-merge-chip {
+        background: #fff3e0 !important;
+        color: #e65100 !important;
       }
       .app-shell {
         height: calc(100vh - 64px);
@@ -205,6 +216,9 @@ export class AppComponent implements OnInit {
   readonly acceptanceStats = toSignal(this.store.select(selectAcceptanceStats), {
     initialValue: { total: 0, pass: 0, fail: 0, byStage: [] },
   });
+  readonly mergeAttention = toSignal(this.store.select(selectAttentionCount), {
+    initialValue: { pending: 0, quarantined: 0, openDiffs: 0 },
+  });
 
   /** 错误提示（写入失败等） */
   readonly errorMessage = toSignal(
@@ -229,5 +243,6 @@ export class AppComponent implements OnInit {
     // 首屏：打开 IndexedDB 并按需播种演示数据，然后由 effect 拉取全部表
     await initDatabase();
     this.store.dispatch(appInit());
+    this.store.dispatch(mergeActions.loadLedger());
   }
 }

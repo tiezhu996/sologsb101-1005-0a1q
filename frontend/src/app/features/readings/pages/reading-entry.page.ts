@@ -26,6 +26,7 @@ import { ROUTES } from '../../../core/router/app.routes';
 import { stepActions } from '../../../core/store/step.actions';
 import { buildStepViews, selectStepStats } from '../../../core/store/step.selectors';
 import { selectBridges } from '../../../core/store/bridge.selectors';
+import { selectMergeOverview, selectOfflineReadingIds } from '../../../core/store/handoff.selectors';
 import { IdbTableService } from '../../../core/services/idb-table.service';
 import { putReadings, rowMeta, newId, type ReadingRow } from '../../../core/utils/db';
 import { formatMm, formatStress } from '../../../core/utils/unit';
@@ -114,6 +115,13 @@ interface BatchRow {
         [suffix]="'条'"
         color="#c62828"
         [hint]="'限位值 ' + (selectedStep()?.limitMm ?? 0) + ' mm，应力关注值 ' + stressAlert + ' MPa'"
+      />
+      <app-stat-badge
+        title="离线并入读数"
+        [value]="mergeOverview().appendedReadings"
+        [suffix]="'条'"
+        color="#00897b"
+        [hint]="'已接收离线作业包 ' + mergeOverview().receivedPackages + ' 个，按步骤+测点唯一键追加'"
       />
     </div>
 
@@ -272,10 +280,15 @@ interface BatchRow {
             </thead>
             <tbody>
               @for (reading of filtered(); track reading.id) {
-                <tr>
+                <tr [class.is-offline]="isOfflineReading(reading.id)">
                   <td>#{{ reading.stepSeq }}</td>
                   <td>{{ reading.bridgeName }}</td>
-                  <td class="gb-mono">{{ reading.pointCode }}</td>
+                  <td class="gb-mono">
+                    {{ reading.pointCode }}
+                    @if (isOfflineReading(reading.id)) {
+                      <mat-chip class="offline-chip" matTooltip="离线作业包按步骤+测点唯一键追加">离线</mat-chip>
+                    }
+                  </td>
                   <td>{{ formatMm(reading.displacementMm) }}</td>
                   <td [style.color]="reading.deviationMm === 0 ? '#2e7d32' : '#ed6c02'">
                     {{ formatMm(reading.deviationMm) }}
@@ -313,6 +326,15 @@ interface BatchRow {
         border: 1px solid rgba(22, 34, 46, 0.2);
         border-radius: 6px;
         font-size: 13px;
+      }
+      mat-chip.offline-chip {
+        background: #e0f2f1 !important;
+        color: #00695c !important;
+        min-height: 20px;
+        font-size: 11px;
+      }
+      tr.is-offline td {
+        background: #f2fbf9;
       }
     `,
   ],
@@ -355,6 +377,25 @@ export class ReadingEntryPage {
       maxLimitMm: 0,
     },
   });
+
+  /** 离线作业包追加的读数 id 集合（读数页读取合并结果） */
+  readonly offlineReadingIds = toSignal(this.store.select(selectOfflineReadingIds), {
+    initialValue: new Set<string>(),
+  });
+  readonly mergeOverview = toSignal(this.store.select(selectMergeOverview), {
+    initialValue: {
+      receivedPackages: 0,
+      openConflicts: 0,
+      resolvedConflicts: 0,
+      failedBatches: 0,
+      evidencePending: 0,
+      appendedReadings: 0,
+    },
+  });
+
+  isOfflineReading(readingId: string): boolean {
+    return this.offlineReadingIds().has(readingId);
+  }
 
   readonly stepViews: Signal<StepView[]> = computed(() =>
     buildStepViews(this.steps(), this.readings(), this.bridges()),

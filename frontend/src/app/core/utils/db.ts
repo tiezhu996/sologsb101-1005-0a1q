@@ -12,13 +12,19 @@ import type { Bearing, DiseaseGrade } from '../types/bearing';
 import type { Step, SyncRequirement } from '../types/step';
 import type { Reading } from '../types/reading';
 import type { Acceptance, AcceptanceStage } from '../types/acceptance';
+import type {
+  MergeBatchRow,
+  MergeConflictRow,
+  MergeEvidenceRow,
+  MergeJournalRow,
+} from '../types/handoff';
 import { ROW_REVISION, type Revisioned } from '../types/persistence';
 
 /** 浏览器 IndexedDB 库名 */
 export const DB_NAME = 'gbbridgebear';
 
 /** 当前数据结构版本号（每次调整字段结构必须 +1 并补迁移） */
-export const DB_SCHEMA_VERSION = 2;
+export const DB_SCHEMA_VERSION = 3;
 
 export { ROW_REVISION };
 export type { Revisioned };
@@ -29,6 +35,10 @@ export type BearingRow = Bearing;
 export type StepRow = Step;
 export type ReadingRow = Reading;
 export type AcceptanceRow = Acceptance;
+export type MergeConflictRecord = MergeConflictRow;
+export type MergeJournalRecord = MergeJournalRow;
+export type MergeBatchRecord = MergeBatchRow;
+export type MergeEvidenceRecord = MergeEvidenceRow;
 
 class BridgeBearingDatabase extends Dexie {
   bridges!: Table<BridgeRow, string>;
@@ -38,6 +48,14 @@ class BridgeBearingDatabase extends Dexie {
   readings!: Table<ReadingRow, string>;
   acceptances!: Table<AcceptanceRow, string>;
   settings!: Table<{ id: string; value: string; updatedAt: string }, string>;
+  /** 离线合并：字段级差异（两边都改过时保留主台账原值并列差异） */
+  mergeConflicts!: Table<MergeConflictRecord, string>;
+  /** 离线合并：已接收作业包去重流水（按包号唯一） */
+  mergeJournals!: Table<MergeJournalRecord, string>;
+  /** 离线合并：失败 / 成功批次（失败批次保留供重试） */
+  mergeBatches!: Table<MergeBatchRecord, string>;
+  /** 离线合并：待补证区（旧包缺基线等，只登记不覆盖） */
+  mergeEvidence!: Table<MergeEvidenceRecord, string>;
 
   constructor() {
     super(DB_NAME);
@@ -100,6 +118,22 @@ class BridgeBearingDatabase extends Dexie {
           if (typeof row.targetLiftMm !== 'number' && typeof row.lift === 'number') row.targetLiftMm = row.lift;
         });
       });
+
+    // v3：新增离线合并交接四张表——差异清单、已接收包去重流水、合并批次、待补证区。
+    //     业务六表结构不变；新表独立维护，升级无需搬运既有数据。
+    this.version(DB_SCHEMA_VERSION).stores({
+      bridges: 'id, name, bridgeType, builtYear, roadClass, archived',
+      piers: 'id, bridgeId, code, capElevation, [bridgeId+code]',
+      bearings: 'id, pierId, diseaseGrade, type, serial, [pierId+serial]',
+      steps: 'id, bridgeId, seq, state, syncRequirement, [bridgeId+seq]',
+      readings: 'id, stepId, pointCode, recordedAt, [stepId+pointCode]',
+      acceptances: 'id, bearingId, stage, conclusion, [bearingId+stage]',
+      settings: 'id',
+      mergeConflicts: 'id, packageNo, bridgeId, entity, entityId, field, status, [entity+entityId+status]',
+      mergeJournals: 'id, packageNo, bridgeId, receivedAt',
+      mergeBatches: 'id, packageNo, bridgeId, status, createdAt',
+      mergeEvidence: 'id, packageNo, createdAt',
+    });
   }
 }
 
@@ -485,6 +519,75 @@ export async function removeAcceptance(id: string): Promise<void> {
   await db.acceptances.delete(id);
 }
 
+/* ======================== 离线合并交接台账 ======================== */
+
+export async function listMergeConflicts(): Promise<MergeConflictRecord[]> {
+  const rows = await db.mergeConflicts.toArray();
+  return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function listOpenMergeConflicts(): Promise<MergeConflictRecord[]> {
+  return db.mergeConflicts.where('status').equals('open').toArray();
+}
+
+export async function putMergeConflict(row: MergeConflictRecord): Promise<void> {
+  await db.mergeConflicts.put(row);
+}
+
+export async function putMergeConflicts(rows: MergeConflictRecord[]): Promise<void> {
+  await db.mergeConflicts.bulkPut(rows);
+}
+
+/** 某支座是否存在未裁定差异（验收签署前的硬性卡口） */
+export async function bearingHasOpenConflict(bearingId: string): Promise<boolean> {
+  const count = await db.mergeConflicts
+    .where('[entity+entityId+status]')
+    .equals(['bearing', bearingId, 'open'])
+    .count();
+  return count > 0;
+}
+
+export async function listMergeJournals(): Promise<MergeJournalRecord[]> {
+  const rows = await db.mergeJournals.toArray();
+  return rows.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+}
+
+/** 包号是否已接收（按包号去重） */
+export async function journalHasPackage(packageNo: string): Promise<boolean> {
+  const count = await db.mergeJournals.where('packageNo').equals(packageNo).count();
+  return count > 0;
+}
+
+export async function putMergeJournal(row: MergeJournalRecord): Promise<void> {
+  await db.mergeJournals.put(row);
+}
+
+export async function listMergeBatches(): Promise<MergeBatchRecord[]> {
+  const rows = await db.mergeBatches.toArray();
+  return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function putMergeBatch(row: MergeBatchRecord): Promise<void> {
+  await db.mergeBatches.put(row);
+}
+
+export async function removeMergeBatch(id: string): Promise<void> {
+  await db.mergeBatches.delete(id);
+}
+
+export async function listMergeEvidence(): Promise<MergeEvidenceRecord[]> {
+  const rows = await db.mergeEvidence.toArray();
+  return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function putMergeEvidence(row: MergeEvidenceRecord): Promise<void> {
+  await db.mergeEvidence.put(row);
+}
+
+export async function removeMergeEvidence(id: string): Promise<void> {
+  await db.mergeEvidence.delete(id);
+}
+
 /* ========================== 整库导入导出 ========================== */
 
 export interface DatabaseSnapshot {
@@ -497,17 +600,27 @@ export interface DatabaseSnapshot {
   steps: Step[];
   readings: Reading[];
   acceptances: Acceptance[];
+  /** 离线合并交接台账（v3 起导出；旧备份缺省时按空表处理） */
+  mergeConflicts?: MergeConflictRecord[];
+  mergeJournals?: MergeJournalRecord[];
+  mergeBatches?: MergeBatchRecord[];
+  mergeEvidence?: MergeEvidenceRecord[];
 }
 
 export async function exportSnapshot(): Promise<DatabaseSnapshot> {
-  const [bridges, piers, bearings, steps, readings, acceptances] = await Promise.all([
-    listBridges(),
-    listPiers(),
-    listBearings(),
-    listSteps(),
-    listReadings(),
-    listAcceptances(),
-  ]);
+  const [bridges, piers, bearings, steps, readings, acceptances, mergeConflicts, mergeJournals, mergeBatches, mergeEvidence] =
+    await Promise.all([
+      listBridges(),
+      listPiers(),
+      listBearings(),
+      listSteps(),
+      listReadings(),
+      listAcceptances(),
+      listMergeConflicts(),
+      listMergeJournals(),
+      listMergeBatches(),
+      listMergeEvidence(),
+    ]);
   return {
     name: DB_NAME,
     schemaVersion: DB_SCHEMA_VERSION,
@@ -518,13 +631,28 @@ export async function exportSnapshot(): Promise<DatabaseSnapshot> {
     steps,
     readings,
     acceptances,
+    mergeConflicts,
+    mergeJournals,
+    mergeBatches,
+    mergeEvidence,
   };
 }
 
 export async function importSnapshot(snapshot: DatabaseSnapshot): Promise<void> {
   await db.transaction(
     'rw',
-    [db.bridges, db.piers, db.bearings, db.steps, db.readings, db.acceptances],
+    [
+      db.bridges,
+      db.piers,
+      db.bearings,
+      db.steps,
+      db.readings,
+      db.acceptances,
+      db.mergeConflicts,
+      db.mergeJournals,
+      db.mergeBatches,
+      db.mergeEvidence,
+    ],
     async () => {
       await Promise.all([
         db.bridges.clear(),
@@ -533,6 +661,10 @@ export async function importSnapshot(snapshot: DatabaseSnapshot): Promise<void> 
         db.steps.clear(),
         db.readings.clear(),
         db.acceptances.clear(),
+        db.mergeConflicts.clear(),
+        db.mergeJournals.clear(),
+        db.mergeBatches.clear(),
+        db.mergeEvidence.clear(),
       ]);
       await db.bridges.bulkPut(snapshot.bridges ?? []);
       await db.piers.bulkPut(snapshot.piers ?? []);
@@ -540,15 +672,31 @@ export async function importSnapshot(snapshot: DatabaseSnapshot): Promise<void> 
       await db.steps.bulkPut(snapshot.steps ?? []);
       await db.readings.bulkPut(snapshot.readings ?? []);
       await db.acceptances.bulkPut(snapshot.acceptances ?? []);
+      // 旧版备份没有交接台账：按空表导入，不影响业务六表
+      if (snapshot.mergeConflicts) await db.mergeConflicts.bulkPut(snapshot.mergeConflicts);
+      if (snapshot.mergeJournals) await db.mergeJournals.bulkPut(snapshot.mergeJournals);
+      if (snapshot.mergeBatches) await db.mergeBatches.bulkPut(snapshot.mergeBatches);
+      if (snapshot.mergeEvidence) await db.mergeEvidence.bulkPut(snapshot.mergeEvidence);
     },
   );
 }
 
-/** 清空并重新播种 */
+/** 清空并重新播种（同时清空离线合并交接台账，保证演示数据可重置） */
 export async function resetDatabase(): Promise<void> {
   await db.transaction(
     'rw',
-    [db.bridges, db.piers, db.bearings, db.steps, db.readings, db.acceptances],
+    [
+      db.bridges,
+      db.piers,
+      db.bearings,
+      db.steps,
+      db.readings,
+      db.acceptances,
+      db.mergeConflicts,
+      db.mergeJournals,
+      db.mergeBatches,
+      db.mergeEvidence,
+    ],
     async () => {
       await Promise.all([
         db.bridges.clear(),
@@ -557,6 +705,10 @@ export async function resetDatabase(): Promise<void> {
         db.steps.clear(),
         db.readings.clear(),
         db.acceptances.clear(),
+        db.mergeConflicts.clear(),
+        db.mergeJournals.clear(),
+        db.mergeBatches.clear(),
+        db.mergeEvidence.clear(),
       ]);
     },
   );
@@ -565,15 +717,31 @@ export async function resetDatabase(): Promise<void> {
 
 /** 各表行数统计 */
 export async function countAll(): Promise<Record<string, number>> {
-  const [bridges, piers, bearings, steps, readings, acceptances] = await Promise.all([
-    db.bridges.count(),
-    db.piers.count(),
-    db.bearings.count(),
-    db.steps.count(),
-    db.readings.count(),
-    db.acceptances.count(),
-  ]);
-  return { bridges, piers, bearings, steps, readings, acceptances };
+  const [bridges, piers, bearings, steps, readings, acceptances, mergeConflicts, mergeJournals, mergeBatches, mergeEvidence] =
+    await Promise.all([
+      db.bridges.count(),
+      db.piers.count(),
+      db.bearings.count(),
+      db.steps.count(),
+      db.readings.count(),
+      db.acceptances.count(),
+      db.mergeConflicts.count(),
+      db.mergeJournals.count(),
+      db.mergeBatches.count(),
+      db.mergeEvidence.count(),
+    ]);
+  return {
+    bridges,
+    piers,
+    bearings,
+    steps,
+    readings,
+    acceptances,
+    mergeConflicts,
+    mergeJournals,
+    mergeBatches,
+    mergeEvidence,
+  };
 }
 
 /** 结构版本信息 */

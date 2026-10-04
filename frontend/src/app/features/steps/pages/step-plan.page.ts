@@ -38,6 +38,7 @@ import {
   selectSyncLevels,
 } from '../../../core/store/step.selectors';
 import { selectBridges } from '../../../core/store/bridge.selectors';
+import { selectMergeOverview, selectOfflineTouchedStepIds } from '../../../core/store/handoff.selectors';
 import { formatLift, formatMm, share } from '../../../core/utils/unit';
 import { TOLERANCE_HEX, TOLERANCE_LEVEL_LABEL } from '../../../core/utils/tolerance';
 import { StatBadgeComponent } from '../../../shared/components/common/stat-badge.component';
@@ -197,6 +198,13 @@ export class StepDialogComponent {
         color="#3949ab"
         hint="同步偏差按步骤内读数极差计算"
       />
+      <app-stat-badge
+        title="离线合并步骤"
+        [value]="offlineStepIds().size"
+        [suffix]="'级'"
+        color="#00897b"
+        [hint]="'已接收作业包 ' + mergeOverview().receivedPackages + ' 个'"
+      />
     </div>
 
     <app-filter-bar
@@ -259,7 +267,12 @@ export class StepDialogComponent {
                 </td>
                 <td>{{ step.limitMm }} mm</td>
                 <td [matTooltip]="syncHintOf(step)">{{ syncRequirementLabel[step.syncRequirement] }}</td>
-                <td>{{ step.leader }}</td>
+                <td>
+                  {{ step.leader }}
+                  @if (isOfflineMerged(step.id)) {
+                    <mat-chip class="offline-chip" matTooltip="参数来自离线作业包单边变化合并">离线并入</mat-chip>
+                  }
+                </td>
                 <td>
                   <mat-chip-set>
                     <mat-chip [class]="'state-' + step.state">{{ stepStateLabel[step.state] }}</mat-chip>
@@ -360,6 +373,10 @@ export class StepDialogComponent {
         background: #e8f5e9 !important;
         color: #1b5e20 !important;
       }
+      mat-chip.offline-chip {
+        background: #e0f2f1 !important;
+        color: #00695c !important;
+      }
     `,
   ],
 })
@@ -407,6 +424,25 @@ export class StepPlanPage {
   );
   readonly syncHints = toSignal(this.store.select(selectSyncHints), { initialValue: [] });
   readonly stepAverages = toSignal(this.store.select(selectStepAverages), { initialValue: {} });
+
+  /** 离线合并接收过单边参数变化的步骤 id（步骤页读取合并结果） */
+  readonly offlineStepIds = toSignal(this.store.select(selectOfflineTouchedStepIds), {
+    initialValue: new Set<string>(),
+  });
+  readonly mergeOverview = toSignal(this.store.select(selectMergeOverview), {
+    initialValue: {
+      receivedPackages: 0,
+      openConflicts: 0,
+      resolvedConflicts: 0,
+      failedBatches: 0,
+      evidencePending: 0,
+      appendedReadings: 0,
+    },
+  });
+
+  isOfflineMerged(stepId: string): boolean {
+    return this.offlineStepIds().has(stepId);
+  }
 
   readonly stepViews: Signal<StepView[]> = computed(() =>
     buildStepViews(this.steps(), this.readings(), this.bridges()),

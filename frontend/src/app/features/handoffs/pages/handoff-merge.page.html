@@ -1,0 +1,424 @@
+<div class="page-head">
+  <div>
+    <h2 class="page-title">离线合并交接</h2>
+    <div class="page-sub">
+      检修组离线作业回站交接：作业包冻结基线、按包号去重，只接基线后的单边变化；新增读数按步骤 + 测点唯一键追加；
+      两边都改保留主台账原值并列差异（处理前该支座不能签署验收）。
+    </div>
+  </div>
+  <div class="gb-inline-actions">
+    <button mat-stroked-button (click)="goAcceptance()">
+      <mat-icon>fact_check</mat-icon>
+      去分步验收
+    </button>
+  </div>
+</div>
+
+<div class="stat-grid">
+  <app-stat-badge title="已接收作业包" [value]="overview().receivedPackages" [suffix]="'个'" color="#1565c0" />
+  <app-stat-badge
+    title="未裁定差异"
+    [value]="overview().openConflicts"
+    [suffix]="'处'"
+    color="#c62828"
+    hint="存在未裁定差异的支座不能签署验收"
+  />
+  <app-stat-badge title="已裁定差异" [value]="overview().resolvedConflicts" [suffix]="'处'" color="#2e7d32" />
+  <app-stat-badge
+    title="未完成批次"
+    [value]="overview().failedBatches"
+    [suffix]="'批'"
+    color="#e65100"
+    hint="写入失败的批次保留供重试，主台账已恢复"
+  />
+  <app-stat-badge
+    title="待补证区"
+    [value]="overview().evidencePending"
+    [suffix]="'包'"
+    color="#6a1b9a"
+    hint="旧包缺基线等，只登记不猜着覆盖"
+  />
+  <app-stat-badge title="离线追加读数" [value]="overview().appendedReadings" [suffix]="'条'" color="#00897b" />
+</div>
+
+<!-- 交接工具箱：冻结基线 + 回站读入 + 演示包 -->
+<mat-card appearance="outlined" class="gb-section">
+  <div class="toolbox">
+    <div class="gb-card-title">交接工具箱</div>
+    <div class="tool-row">
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>当前桥梁（冻结 / 演示）</mat-label>
+        <mat-select [ngModel]="currentBridge()?.id" (ngModelChange)="selectedBridgeId.set($event)">
+          @for (bridge of bridges(); track bridge.id) {
+            <mat-option [value]="bridge.id">{{ bridge.name }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+      <button mat-stroked-button (click)="exportFrozenBaseline()">
+        <mat-icon>ac_unit</mat-icon>
+        冻结基线并导出空白作业包
+      </button>
+      <span class="tool-hint">检修组出发前冻结当前支座等级与步骤参数</span>
+    </div>
+
+    <mat-divider></mat-divider>
+
+    <div class="tool-row">
+      <label class="upload-label">
+        <input type="file" accept="application/json" hidden (change)="onFileSelected($event)" />
+        <span mat-flat-button color="primary" class="fake-button">
+          <mat-icon>cloud_upload</mat-icon>
+          回站读入作业包
+        </span>
+      </label>
+      <span class="tool-hint">
+        校验作业包结构与冻结基线；按包号去重；缺基线的旧包自动进入待补证区
+      </span>
+    </div>
+
+    <mat-divider></mat-divider>
+
+    <div class="tool-row">
+      <span class="tool-hint" style="font-weight: 600; color: rgba(22,34,46,.75)">演示数据：</span>
+      <button mat-stroked-button (click)="generateAcceptedDemo()">
+        <mat-icon>play_circle</mat-icon>
+        正常接收包
+      </button>
+      <button mat-stroked-button (click)="generateConflictDemo()">
+        <mat-icon>compare_arrows</mat-icon>
+        两边都改包
+      </button>
+      <button mat-stroked-button (click)="generateLegacyDemo()">
+        <mat-icon>history_toggle_off</mat-icon>
+        旧包缺基线
+      </button>
+    </div>
+  </div>
+</mat-card>
+
+<!-- 交接预览：读入作业包后的合并计划 -->
+@if (previewPlan(); as plan) {
+  <mat-card appearance="outlined" class="gb-section preview-card">
+    <div class="preview-head">
+      <div>
+        <div class="gb-card-title">交接预览 · 作业包 {{ plan.packageNo }}</div>
+        <div class="gb-hint">
+          {{ plan.bridgeName }} · {{ plan.crew }} · 冻结 {{ plan.frozenAt }} · 回站 {{ plan.returnedAt }}
+        </div>
+      </div>
+      <div class="gb-inline-actions">
+        <button mat-flat-button color="primary" (click)="applyPreview()">
+          <mat-icon>merge_type</mat-icon>
+          执行合并交接
+        </button>
+        <button mat-stroked-button (click)="clearPreview()">取消</button>
+      </div>
+    </div>
+
+    <div class="stat-grid" style="margin-top: 10px">
+      <app-stat-badge title="接收单边变化" [value]="plan.acceptCount" [suffix]="'处'" color="#2e7d32" />
+      <app-stat-badge title="两边都改（冲突）" [value]="plan.conflictCount" [suffix]="'处'" color="#c62828" />
+      <app-stat-badge title="追加读数" [value]="plan.appendReadingCount" [suffix]="'条'" color="#00897b" />
+      <app-stat-badge title="重复读数跳过" [value]="plan.dupReadingCount" [suffix]="'条'" color="#e65100" />
+    </div>
+
+    @if (plan.bearingPlans.length > 0) {
+      <div class="plan-block">
+        <div class="plan-block-title">支座病害等级</div>
+        <div class="gb-table-wrap">
+          <table class="gb-table">
+            <thead>
+              <tr>
+                <th>支座</th>
+                <th>基线值</th>
+                <th>主台账现值</th>
+                <th>离线值</th>
+                <th>结论</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of plan.bearingPlans; track row.entityId + row.field) {
+                <tr>
+                  <td>{{ row.entityId }}</td>
+                  <td>{{ formatValue(row.field, row.baselineValue) }}</td>
+                  <td [class.cell-master]="row.kind === 'conflict'">
+                    {{ formatValue(row.field, row.masterValue) }}
+                  </td>
+                  <td>{{ formatValue(row.field, row.offlineValue) }}</td>
+                  <td>
+                    <span class="plan-tag" [class]="'tag-' + row.kind">{{ planTagText(row.kind) }}</span>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    }
+
+    @if (plan.stepPlans.length > 0) {
+      <div class="plan-block">
+        <div class="plan-block-title">顶升步骤参数</div>
+        <div class="gb-table-wrap">
+          <table class="gb-table">
+            <thead>
+              <tr>
+                <th>步骤</th>
+                <th>字段</th>
+                <th>基线值</th>
+                <th>主台账现值</th>
+                <th>离线值</th>
+                <th>结论</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of plan.stepPlans; track row.entityId + row.field) {
+                <tr>
+                  <td>{{ row.entityId }}</td>
+                  <td>{{ fieldLabel[row.field] }}</td>
+                  <td>{{ formatValue(row.field, row.baselineValue) }}</td>
+                  <td [class.cell-master]="row.kind === 'conflict'">
+                    {{ formatValue(row.field, row.masterValue) }}
+                  </td>
+                  <td>{{ formatValue(row.field, row.offlineValue) }}</td>
+                  <td>
+                    <span class="plan-tag" [class]="'tag-' + row.kind">{{ planTagText(row.kind) }}</span>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    }
+
+    @if (plan.readingPlans.length > 0) {
+      <div class="plan-block">
+        <div class="plan-block-title">新增测点读数（步骤 + 测点唯一键）</div>
+        <div class="gb-table-wrap">
+          <table class="gb-table">
+            <thead>
+              <tr>
+                <th>步骤</th>
+                <th>测点</th>
+                <th>位移</th>
+                <th>应力</th>
+                <th>记录时间</th>
+                <th>记录人</th>
+                <th>结论</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of plan.readingPlans; track row.targetId) {
+                <tr>
+                  <td>{{ row.stepId }}</td>
+                  <td class="gb-mono">{{ row.pointCode }}</td>
+                  <td>{{ row.draft.displacementMm }} mm</td>
+                  <td>{{ row.draft.stressMpa }} MPa</td>
+                  <td>{{ row.draft.recordedAt }}</td>
+                  <td>{{ row.draft.operator }}</td>
+                  <td>
+                    <span class="plan-tag" [class]="'tag-' + row.kind">
+                      {{ row.kind === 'append' ? '追加' : '唯一键已存在 · 跳过' }}
+                    </span>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    }
+
+    <div class="gb-hint" style="margin-top: 10px">
+      冲突字段保留主台账原值、不被离线值覆盖，差异写入下方清单并挂起该支座验收；全部写入在单个事务内完成，失败自动恢复主台账。
+    </div>
+  </mat-card>
+}
+
+<!-- 差异清单：两边都改，保留主台账原值，等待裁定 -->
+<div class="gb-section">
+  <div class="gb-card-title" style="margin-bottom: 8px">差异清单（{{ conflictViews().length }} 处）</div>
+  @if (conflictViews().length === 0) {
+    <app-empty-panel
+      title="暂无两边都改的差异"
+      description="离线交接时若支座病害等级或步骤参数两边都改，会在此保留主台账原值并列出差异，裁定前该支座不能签署验收。"
+      icon="balance"
+    />
+  } @else {
+    <div class="gb-table-wrap">
+      <table class="gb-table">
+        <thead>
+          <tr>
+            <th>作业包</th>
+            <th>桥梁 / 对象</th>
+            <th>字段</th>
+            <th>基线值</th>
+            <th>主台账原值</th>
+            <th>离线值</th>
+            <th>状态</th>
+            <th style="width: 220px">裁定</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of conflictViews(); track row.id) {
+            <tr [class.row-open]="row.status === 'open'">
+              <td class="gb-mono">{{ row.packageNo }}</td>
+              <td>{{ row.bridgeName }} · {{ row.contextLabel }}</td>
+              <td>{{ fieldLabel[row.field] }}</td>
+              <td>{{ formatValue(row.field, row.baselineValue) }}</td>
+              <td class="cell-master">{{ formatValue(row.field, row.masterValue) }}</td>
+              <td>{{ formatValue(row.field, row.offlineValue) }}</td>
+              <td>
+                <span class="plan-tag" [class]="row.status === 'open' ? 'tag-conflict' : 'tag-accept'">
+                  {{ row.status === 'open' ? '待裁定 · 挂起验收' : '已裁定' }}
+                </span>
+              </td>
+              <td>
+                @if (row.status === 'open') {
+                  <div class="gb-row-actions">
+                    <button mat-button color="primary" (click)="keepMaster(row.id)">保留主台账</button>
+                    <button mat-button (click)="takeOffline(row.id)">采用离线值</button>
+                  </div>
+                } @else {
+                  <span class="gb-hint">{{ row.resolution === 'keepMaster' ? '已保留主台账原值' : '已采用离线值' }}</span>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>
+
+<!-- 未完成批次：失败后保留供重试 -->
+<div class="gb-section">
+  <div class="gb-card-title" style="margin-bottom: 8px">未完成批次（{{ failedBatches().length }} 批）</div>
+  @if (failedBatches().length === 0) {
+    <app-empty-panel
+      title="没有待重试的批次"
+      description="合并写入失败时会自动恢复主台账，并把作业包与差异保留为未完成批次，可在此一键重试。"
+      icon="replay_circle_filled"
+    />
+  } @else {
+    <div class="gb-table-wrap">
+      <table class="gb-table">
+        <thead>
+          <tr>
+            <th>包号</th>
+            <th>桥梁 / 班组</th>
+            <th>失败原因</th>
+            <th>待接收</th>
+            <th>尝试次数</th>
+            <th>时间</th>
+            <th style="width: 180px">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (batch of failedBatches(); track batch.id) {
+            <tr>
+              <td class="gb-mono">{{ batch.packageNo }}</td>
+              <td>{{ batch.bridgeName }} · {{ batch.crew }}</td>
+              <td class="gb-hint">{{ batch.error }}</td>
+              <td>{{ batch.pendingAccept }} 处变化 / {{ batch.pendingReadings }} 条读数</td>
+              <td>{{ batch.attempts }}</td>
+              <td>{{ batch.createdAt }}</td>
+              <td>
+                <div class="gb-row-actions">
+                  <button mat-flat-button color="primary" (click)="retryBatch(batch.id)">
+                    <mat-icon>refresh</mat-icon>
+                    重试
+                  </button>
+                  <button mat-button color="warn" (click)="removeBatch(batch.id)">
+                    <mat-icon>delete</mat-icon>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>
+
+<!-- 已接收作业包流水：按包号去重的依据 -->
+<div class="gb-section">
+  <div class="gb-card-title" style="margin-bottom: 8px">已接收作业包流水（{{ journals().length }} 个，按包号去重）</div>
+  @if (journals().length === 0) {
+    <app-empty-panel title="尚未接收作业包" description="回站读入作业包并执行合并后，会在此按包号登记，重复包号不再接收。" icon="inventory_2" />
+  } @else {
+    <div class="gb-table-wrap">
+      <table class="gb-table">
+        <thead>
+          <tr>
+            <th>包号</th>
+            <th>桥梁 / 班组</th>
+            <th>接收时间</th>
+            <th>接收支座</th>
+            <th>接收步骤</th>
+            <th>追加读数</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (journal of journals(); track journal.id) {
+            <tr>
+              <td class="gb-mono">{{ journal.packageNo }}</td>
+              <td>{{ journal.bridgeName }} · {{ journal.crew }}</td>
+              <td>{{ journal.receivedAt }}</td>
+              <td>{{ journal.acceptedBearingIds.length }} 个</td>
+              <td>{{ journal.acceptedStepIds.length }} 个</td>
+              <td>{{ journal.appendedReadingIds.length }} 条</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>
+
+<!-- 待补证区：旧包缺基线等 -->
+<div class="gb-section">
+  <div class="gb-card-title" style="margin-bottom: 8px">待补证区（{{ evidence().length }} 包）</div>
+  @if (evidence().length === 0) {
+    <app-empty-panel
+      title="待补证区为空"
+      description="缺少冻结基线的旧包或结构无法识别的文件只登记到这里，不猜着覆盖；补齐凭证后再交接。"
+      icon="rule_folder"
+    />
+  } @else {
+    <div class="gb-table-wrap">
+      <table class="gb-table">
+        <thead>
+          <tr>
+            <th>包号</th>
+            <th>待补证原因</th>
+            <th>登记时间</th>
+            <th style="width: 200px">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (item of evidence(); track item.id) {
+            <tr>
+              <td class="gb-mono">{{ item.packageNo }}</td>
+              <td class="gb-hint">{{ item.reason }}</td>
+              <td>{{ item.createdAt }}</td>
+              <td>
+                <div class="gb-row-actions">
+                  <button mat-stroked-button (click)="downloadEvidence(item.rawJson, item.packageNo)">
+                    <mat-icon>download</mat-icon>
+                    下载原始包
+                  </button>
+                  <button mat-button color="warn" (click)="removeEvidence(item.id, item.rawJson, item.packageNo)">
+                    <mat-icon>delete</mat-icon>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

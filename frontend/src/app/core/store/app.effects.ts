@@ -37,6 +37,7 @@ import type { AcceptanceRow } from '../utils/db';
 import { escalateGrade } from '../types/bearing';
 import { resequenceSteps } from '../types/step';
 import { checkBridgeArchived } from './archive.helper';
+import { bearingHasOpenConflict } from '../utils/db';
 
 @Injectable()
 export class AppEffects {
@@ -682,8 +683,16 @@ export class AppEffects {
         switchMap(({ bearingIds, draft }) =>
           from(
             (async () => {
-              if (bearingIds.length === 0) return '';
-              const rows: AcceptanceRow[] = bearingIds.map((bearingId) => ({
+              if (bearingIds.length === 0) return { summary: '', blocked: [] as string[] };
+              // 硬性卡口：存在未裁定差异（病害等级两边都改）的支座不能签署验收
+              const blocked = (
+                await Promise.all(bearingIds.map(async (id) => ((await bearingHasOpenConflict(id)) ? id : null)))
+              ).filter((id): id is string => id !== null);
+              const allowed = bearingIds.filter((id) => !blocked.includes(id));
+              if (allowed.length === 0) {
+                return { summary: '', blocked };
+              }
+              const rows: AcceptanceRow[] = allowed.map((bearingId) => ({
                 id: newId('acc'),
                 bearingId,
                 stage: draft.stage,
@@ -695,14 +704,24 @@ export class AppEffects {
               await Promise.all(rows.map((row) => putAcceptance(row)));
               const check = await checkBridgeArchived();
               this.idb.emitChange();
-              return check.summaries.join('；');
+              return { summary: check.summaries.join('；'), blocked };
             })(),
           ).pipe(
-            map((summary) =>
-              summary
+            map(({ summary, blocked }) => {
+              if (blocked.length > 0 && !summary) {
+                return writeFailed({
+                  message: `有 ${blocked.length} 个支座病害等级存在未裁定差异，处理完成前不能签署验收`,
+                });
+              }
+              if (blocked.length > 0) {
+                return acceptanceActions.archiveResult({
+                  summary: `${summary}；另有 ${blocked.length} 个支座存在未裁定差异，已跳过签署`,
+                });
+              }
+              return summary
                 ? acceptanceActions.archiveResult({ summary: `已满足归档条件：${summary}` })
-                : acceptanceActions.archiveResult({ summary: '本批次签署完成，尚不满足竣工归档条件' }),
-            ),
+                : acceptanceActions.archiveResult({ summary: '本批次签署完成，尚不满足竣工归档条件' });
+            }),
             catchError((error: unknown) =>
               from([
                 writeFailed({ message: error instanceof Error ? error.message : '批量签署失败' }),

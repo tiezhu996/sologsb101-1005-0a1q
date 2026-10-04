@@ -38,6 +38,7 @@ import { selectBridges, selectPiers } from '../../../core/store/bridge.selectors
 import { selectBearings } from '../../../core/store/bearing.selectors';
 import { selectStepStats } from '../../../core/store/step.selectors';
 import { selectStepState } from '../../../core/store/step.selectors';
+import { selectHeldBearingIds } from '../../../core/store/handoff.selectors';
 import { bridgeActions } from '../../../core/store/bridge.actions';
 import {
   DB_NAME,
@@ -242,10 +243,11 @@ import type {
             </thead>
             <tbody>
               @for (row of bearingRows(); track row.id) {
-                <tr [class.is-selected]="selected().includes(row.id)">
+                <tr [class.is-selected]="selected().includes(row.id)" [class.is-held]="heldByConflict(row.id)">
                   <td>
                     <mat-checkbox
                       [checked]="selected().includes(row.id)"
+                      [disabled]="heldByConflict(row.id)"
                       (change)="toggleBearing(row.id)"
                     ></mat-checkbox>
                   </td>
@@ -254,6 +256,11 @@ import type {
                   <td class="gb-mono">{{ row.spec }}</td>
                   <td><app-grade-tag [grade]="row.diseaseGrade" /></td>
                   <td>
+                    @if (heldByConflict(row.id)) {
+                      <mat-chip class="stage-held" matTooltip="该支座病害等级离线交接两边都改，差异裁定前不能签署验收">
+                        差异挂起 · 禁止签署
+                      </mat-chip>
+                    }
                     <div class="gb-tags">
                       @for (stage of stages; track stage) {
                         <mat-chip [class]="chipClass(row.id, stage)">
@@ -265,10 +272,10 @@ import type {
                   <td class="gb-hint">{{ summaryOf(row.id) }}</td>
                   <td>
                     <div class="gb-row-actions">
-                      <button mat-button color="primary" (click)="signOne(row.id, 'lifted')">顶升到位</button>
-                      <button mat-button (click)="signOne(row.id, 'bearingPlaced')">支座就位</button>
-                      <button mat-button (click)="signOne(row.id, 'beamLowered')">落梁</button>
-                      <button mat-button (click)="signOne(row.id, 'completed')">竣工</button>
+                      <button mat-button color="primary" [disabled]="heldByConflict(row.id)" (click)="signOne(row.id, 'lifted')">顶升到位</button>
+                      <button mat-button [disabled]="heldByConflict(row.id)" (click)="signOne(row.id, 'bearingPlaced')">支座就位</button>
+                      <button mat-button [disabled]="heldByConflict(row.id)" (click)="signOne(row.id, 'beamLowered')">落梁</button>
+                      <button mat-button [disabled]="heldByConflict(row.id)" (click)="signOne(row.id, 'completed')">竣工</button>
                     </div>
                   </td>
                 </tr>
@@ -403,6 +410,14 @@ import type {
         background: #eceff1 !important;
         color: #546e7a !important;
       }
+      mat-chip.stage-held {
+        background: #fdecea !important;
+        color: #b71c1c !important;
+        font-weight: 600;
+      }
+      tr.is-held td {
+        background: #fffaf5;
+      }
     `,
   ],
 })
@@ -430,6 +445,10 @@ export class AcceptanceArchivePage {
   });
   readonly bearings: Signal<BearingRow[]> = toSignal(this.store.select(selectBearings), {
     initialValue: [] as BearingRow[],
+  });
+  /** 存在未裁定离线差异、暂不能签署验收的支座 id 集合 */
+  readonly heldBearingIds = toSignal(this.store.select(selectHeldBearingIds), {
+    initialValue: new Set<string>(),
   });
   readonly activeBridgeId = toSignal(this.store.select((state) => state.bridge.activeBridgeId), {
     initialValue: null as string | null,
@@ -564,6 +583,7 @@ export class AcceptanceArchivePage {
   }
 
   summaryOf(bearingId: string): string {
+    if (this.heldByConflict(bearingId)) return '离线差异未裁定，暂不能签署验收';
     const passed = ACCEPTANCE_STAGES.filter((stage) => this.passed(bearingId, stage));
     const failed = ACCEPTANCE_STAGES.filter((stage) => this.failed(bearingId, stage));
     if (failed.length > 0) return `不合格分步：${failed.map((stage) => ACCEPTANCE_STAGE_LABEL[stage]).join('、')}`;
@@ -597,10 +617,20 @@ export class AcceptanceArchivePage {
   }
 
   selectAllBearings(): void {
-    this.selected.set(this.bearingRows().map((item) => item.id));
+    // 存在未裁定差异的支座挂起，不纳入批量签署
+    this.selected.set(this.bearingRows().filter((row) => !this.heldByConflict(row.id)).map((item) => item.id));
+  }
+
+  /** 某支座是否存在未裁定离线差异（处理前不能签署验收） */
+  heldByConflict(bearingId: string): boolean {
+    return this.heldBearingIds().has(bearingId);
   }
 
   signOne(bearingId: string, stage: AcceptanceStage): void {
+    if (this.heldByConflict(bearingId)) {
+      this.notify('该支座病害等级存在未裁定差异，处理完成前不能签署验收');
+      return;
+    }
     this.store.dispatch(
       acceptanceActions.bulkSign({
         bearingIds: [bearingId],
@@ -618,9 +648,17 @@ export class AcceptanceArchivePage {
   bulkSign(): void {
     const ids = this.selected();
     if (ids.length === 0) return;
+    const blocked = ids.filter((id) => this.heldByConflict(id));
+    if (blocked.length === ids.length) {
+      this.notify('所选支座均存在未裁定差异，处理完成前不能签署验收');
+      return;
+    }
+    if (blocked.length > 0) {
+      this.notify(`有 ${blocked.length} 个支座存在未裁定差异，将跳过这些支座后签署`);
+    }
     this.store.dispatch(
       acceptanceActions.bulkSign({
-        bearingIds: ids,
+        bearingIds: ids.filter((id) => !blocked.includes(id)),
         draft: {
           stage: this.batchStage(),
           conclusion: this.batchConclusion(),
@@ -630,7 +668,7 @@ export class AcceptanceArchivePage {
       }),
     );
     this.notify(
-      `已为 ${ids.length} 个支座签署「${ACCEPTANCE_STAGE_LABEL[this.batchStage()]}」结论：${
+      `已为 ${ids.length - blocked.length} 个支座签署「${ACCEPTANCE_STAGE_LABEL[this.batchStage()]}」结论：${
         ACCEPTANCE_CONCLUSION_LABEL[this.batchConclusion()]
       }`,
     );

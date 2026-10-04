@@ -9,7 +9,9 @@ import { bridgeReducer } from './core/store/bridge.reducer';
 import { bearingReducer } from './core/store/bearing.reducer';
 import { stepReducer } from './core/store/step.reducer';
 import { acceptanceReducer } from './core/store/acceptance.reducer';
+import { handoffReducer } from './core/store/handoff.reducer';
 import { AppEffects } from './core/store/app.effects';
+import { HandoffEffects } from './core/store/handoff.effects';
 
 /**
  * 应用配置：路由 + Angular Material 动画 + NgRx store / effects。
@@ -27,8 +29,9 @@ export const appConfig: ApplicationConfig = {
       bearing: bearingReducer,
       step: stepReducer,
       acceptance: acceptanceReducer,
+      handoff: handoffReducer,
     }),
-    provideEffects([AppEffects]),
+    provideEffects([AppEffects, HandoffEffects]),
     provideStoreDevtools({ maxAge: 25, logOnly: !isDevMode() }),
   ],
 };

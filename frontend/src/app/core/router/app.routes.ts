@@ -12,6 +12,7 @@ export const ROUTES = {
   steps: '/steps',
   readings: '/readings',
   acceptances: '/acceptances',
+  handoffs: '/handoffs',
 } as const;
 
 export const appRoutes: Routes = [
@@ -47,6 +48,12 @@ export const appRoutes: Routes = [
       import('../../features/acceptances/pages/acceptance-archive.page').then(
         (module) => module.AcceptanceArchivePage,
       ),
+  },
+  {
+    path: 'handoffs',
+    title: '离线合并交接',
+    loadComponent: () =>
+      import('../../features/handoffs/pages/handoff-merge.page').then((module) => module.HandoffMergePage),
   },
   { path: '**', redirectTo: ROUTES.bridges },
 ];

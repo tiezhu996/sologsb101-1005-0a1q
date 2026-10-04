@@ -47,6 +47,9 @@ import { StatBadgeComponent } from '../../../shared/components/common/stat-badge
 import { EmptyPanelComponent } from '../../../shared/components/common/empty-panel.component';
 import { FilterBarComponent, type FilterSelectSpec } from '../../../shared/components/common/filter-bar.component';
 import { GradeTagComponent } from '../../../shared/components/common/grade-tag.component';
+import {
+  selectMergeOverview,
+} from '../../../core/store/handoff.selectors';
 
 /** 桥梁表单对话框数据 */
 export interface BridgeDialogData {
@@ -273,6 +276,33 @@ export class PierDialogComponent {
       />
     </div>
 
+    @if (mergeOverview().receivedPackages > 0 || mergeOverview().openConflicts > 0 || mergeOverview().failedBatches > 0 || mergeOverview().evidencePending > 0) {
+      <mat-card appearance="outlined" class="gb-section merge-strip" (click)="go(ROUTES.handoffs)">
+        <div class="merge-strip-inner">
+          <mat-icon class="merge-icon">sync_saved_locally</mat-icon>
+          <div class="merge-strip-text">
+            <div class="gb-card-title">离线合并交接结果</div>
+            <div class="gb-hint">
+              已接收作业包 {{ mergeOverview().receivedPackages }} 个 · 离线追加读数 {{ mergeOverview().appendedReadings }} 条 ·
+              已裁定差异 {{ mergeOverview().resolvedConflicts }} 处
+            </div>
+          </div>
+          <div class="gb-tags">
+            @if (mergeOverview().openConflicts > 0) {
+              <mat-chip class="chip-warn">未裁定差异 {{ mergeOverview().openConflicts }} 处（支座挂起验收）</mat-chip>
+            }
+            @if (mergeOverview().failedBatches > 0) {
+              <mat-chip class="chip-warn">未完成批次 {{ mergeOverview().failedBatches }} 批</mat-chip>
+            }
+            @if (mergeOverview().evidencePending > 0) {
+              <mat-chip class="chip-purple">待补证 {{ mergeOverview().evidencePending }} 包</mat-chip>
+            }
+            <mat-chip highlighted>查看交接台</mat-chip>
+          </div>
+        </div>
+      </mat-card>
+    }
+
     <app-filter-bar
       keywordLabel="关键字"
       keywordPlaceholder="按桥梁名称 / 跨径组合搜索"
@@ -479,6 +509,30 @@ export class PierDialogComponent {
         background: #e3f2fd !important;
         color: #0d47a1 !important;
       }
+      mat-chip.chip-warn {
+        background: #fdecea !important;
+        color: #b71c1c !important;
+      }
+      mat-chip.chip-purple {
+        background: #f3e5f5 !important;
+        color: #6a1b9a !important;
+      }
+      .merge-strip {
+        cursor: pointer;
+      }
+      .merge-strip-inner {
+        padding: 12px 14px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .merge-icon {
+        color: #1565c0;
+      }
+      .merge-strip-text {
+        flex: 1 1 260px;
+      }
     `,
   ],
 })
@@ -500,6 +554,18 @@ export class BridgeListPage {
   });
   readonly activeBridgeId = toSignal(this.store.select(selectActiveBridgeId), { initialValue: null });
   readonly bearings = toSignal(this.store.select(selectBearings), { initialValue: [] });
+
+  /** 离线合并交接结果（总表读取合并结果） */
+  readonly mergeOverview = toSignal(this.store.select(selectMergeOverview), {
+    initialValue: {
+      receivedPackages: 0,
+      openConflicts: 0,
+      resolvedConflicts: 0,
+      failedBatches: 0,
+      evidencePending: 0,
+      appendedReadings: 0,
+    },
+  });
 
   /** 墩台原始行（补充支座统计在 piersOf 中派生） */
   readonly pierViews: Signal<PierRow[]> = toSignal(this.store.select((state) => state.bridge.piers), {

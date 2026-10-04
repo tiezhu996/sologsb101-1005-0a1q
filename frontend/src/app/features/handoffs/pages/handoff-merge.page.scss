@@ -1,0 +1,94 @@
+.toolbox {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tool-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tool-hint {
+  font-size: 12px;
+  color: rgba(22, 34, 46, 0.55);
+}
+
+.upload-label {
+  display: inline-flex;
+}
+
+.fake-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.preview-card {
+  border-color: rgba(21, 101, 192, 0.4);
+  box-shadow: 0 4px 14px rgba(21, 101, 192, 0.08);
+}
+
+.preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.plan-block {
+  margin-top: 12px;
+}
+
+.plan-block-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.plan-tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.tag-accept {
+  background: #e8f5e9;
+  color: #1b5e20;
+}
+
+.tag-conflict {
+  background: #fdecea;
+  color: #b71c1c;
+  font-weight: 600;
+}
+
+.tag-skip {
+  background: #eceff1;
+  color: #546e7a;
+}
+
+.tag-dup {
+  background: #fff4e5;
+  color: #e65100;
+}
+
+.tag-append {
+  background: #e0f2f1;
+  color: #00695c;
+}
+
+.cell-master {
+  font-weight: 600;
+  color: #b71c1c;
+}
+
+tr.row-open td {
+  background: #fffaf5;
+}

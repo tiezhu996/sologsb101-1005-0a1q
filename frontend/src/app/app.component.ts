@@ -13,6 +13,7 @@ import { map } from 'rxjs';
 import { initDatabase } from './core/utils/db';
 import { IdbTableService } from './core/services/idb-table.service';
 import { appInit } from './core/store/app.actions';
+import { handoffActions } from './core/store/handoff.actions';
 import {
   selectBearingStats,
   selectBearings,
@@ -182,6 +183,7 @@ export class AppComponent implements OnInit {
     { path: ROUTES.steps, label: '顶升步骤编排', icon: 'stairs' },
     { path: ROUTES.readings, label: '测点读数录入', icon: 'monitor_heart' },
     { path: ROUTES.acceptances, label: '分步验收与归档', icon: 'fact_check' },
+    { path: ROUTES.handoffs, label: '离线合并交接', icon: 'sync_saved_locally' },
   ];
 
   /** 顶栏与侧栏统计：全部来自 NgRx select */
@@ -222,12 +224,17 @@ export class AppComponent implements OnInit {
     this.idb
       .watch(async () => true, true)
       .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe(() => this.store.dispatch(appInit()));
+      .subscribe(() => {
+        this.store.dispatch(appInit());
+        this.store.dispatch(handoffActions.load());
+      });
   }
 
   async ngOnInit(): Promise<void> {
     // 首屏：打开 IndexedDB 并按需播种演示数据，然后由 effect 拉取全部表
     await initDatabase();
     this.store.dispatch(appInit());
+    // 离线合并交接台账四张表独立加载
+    this.store.dispatch(handoffActions.load());
   }
 }
